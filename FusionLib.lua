@@ -507,7 +507,238 @@ function FusionLib:CreateWindow(config)
                 if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
             end)
 
-            return {Value=current, Set=function(self,v) current=v UpdateSlider(v) end}
+            local SliderObj = {Value=current}
+            SliderObj.Set = function(self, v)
+                v = math.clamp(math.round(v), Min, Max)
+                current = v
+                local pct = (v - Min) / (Max - Min)
+                ValLabel.Text = tostring(v)
+                Fill.Size = UDim2.new(pct, 0, 1, 0)
+                Thumb.Position = UDim2.new(pct, 0, 0.5, 0)
+                SliderObj.Value = v
+            end
+            return SliderObj
+        end
+
+        -- ==================== TEXT SLIDER ====================
+        -- Like a slider but with an editable number box. Type a value or drag.
+        function Tab:CreateTextSlider(sConfig)
+            sConfig = sConfig or {}
+            local Min = sConfig.Min or 0
+            local Max = sConfig.Max or 100
+            local Default = math.clamp(sConfig.Default or Min, Min, Max)
+            local current = Default
+            local Increment = sConfig.Increment or 1
+
+            local Row = Create("Frame", {Size=UDim2.new(1,0,0,58), BackgroundColor3=C.Panel, BorderSizePixel=0}, {ScrollFrame})
+            Create("UICorner", {CornerRadius=UDim.new(0,8)}, {Row})
+            Create("UIPadding", {PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12), PaddingTop=UDim.new(0,8), PaddingBottom=UDim.new(0,8)}, {Row})
+
+            -- Top: name + editable number box
+            local TopRow = Create("Frame", {Size=UDim2.new(1,0,0,20), BackgroundTransparency=1}, {Row})
+            Create("TextLabel", {Size=UDim2.new(0.65,0,1,0),
+                Text=sConfig.Name or "Slider", Font=Enum.Font.GothamSemibold, TextSize=13,
+                TextColor3=C.Text, BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Left}, {TopRow})
+
+            local NumBox = Create("TextBox", {
+                Size=UDim2.new(0.32,0,1,0), AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,0,0,0),
+                BackgroundColor3=C.BG, TextColor3=C.Accent, Text=tostring(current),
+                Font=Enum.Font.GothamBold, TextSize=12, BorderSizePixel=0,
+                ClearTextOnFocus=false, TextXAlignment=Enum.TextXAlignment.Center
+            }, {TopRow})
+            Create("UICorner", {CornerRadius=UDim.new(0,5)}, {NumBox})
+            Create("UIStroke", {Color=C.Border, Thickness=1}, {NumBox})
+
+            -- Bottom: track
+            local Track = Create("Frame", {Size=UDim2.new(1,0,0,6), Position=UDim2.fromOffset(0,32),
+                BackgroundColor3=C.Border, BorderSizePixel=0}, {Row})
+            Create("UICorner", {CornerRadius=UDim.new(1,0)}, {Track})
+            local Fill = Create("Frame", {Size=UDim2.new((current-Min)/(Max-Min),0,1,0), BackgroundColor3=C.Accent, BorderSizePixel=0}, {Track})
+            Create("UICorner", {CornerRadius=UDim.new(1,0)}, {Fill})
+            local Thumb = Create("Frame", {Size=UDim2.fromOffset(14,14), AnchorPoint=Vector2.new(0.5,0.5),
+                Position=UDim2.new((current-Min)/(Max-Min),0,0.5,0), BackgroundColor3=Color3.new(1,1,1), BorderSizePixel=0}, {Track})
+            Create("UICorner", {CornerRadius=UDim.new(1,0)}, {Thumb})
+
+            local TSObj = {Value=current}
+
+            local function ApplyValue(v)
+                v = math.clamp(math.round(v / Increment) * Increment, Min, Max)
+                current = v
+                TSObj.Value = v
+                local pct = (v - Min) / (Max - Min)
+                Fill.Size = UDim2.new(pct, 0, 1, 0)
+                Thumb.Position = UDim2.new(pct, 0, 0.5, 0)
+                NumBox.Text = tostring(v)
+                if sConfig.Callback then pcall(sConfig.Callback, v) end
+            end
+
+            local function UpdateFromX(x)
+                local abs = Track.AbsolutePosition.X
+                local w = Track.AbsoluteSize.X
+                local pct = math.clamp((x - abs) / w, 0, 1)
+                ApplyValue(Min + (Max - Min) * pct)
+            end
+
+            local sliding = false
+            Track.InputBegan:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                    sliding = true; UpdateFromX(i.Position.X)
+                end
+            end)
+            UserInputService.InputChanged:Connect(function(i)
+                if sliding and i.UserInputType == Enum.UserInputType.MouseMovement then UpdateFromX(i.Position.X) end
+            end)
+            UserInputService.InputEnded:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
+            end)
+
+            -- Typing a value in the box
+            NumBox.FocusLost:Connect(function()
+                local v = tonumber(NumBox.Text)
+                if v then ApplyValue(v) else NumBox.Text = tostring(current) end
+            end)
+
+            TSObj.Set = function(self, v) ApplyValue(v) end
+            return TSObj
+        end
+
+        -- ==================== MULTI-DROPDOWN ====================
+        -- Like dropdown but lets you pick multiple options at once.
+        function Tab:CreateMultiDropdown(dConfig)
+            dConfig = dConfig or {}
+            local Options = dConfig.Options or {}
+            local selected = {}
+            if dConfig.Default then
+                for _, v in ipairs(dConfig.Default) do selected[v] = true end
+            end
+            local open = false
+
+            local function SelectedText()
+                local t = {}
+                for _, opt in ipairs(Options) do if selected[opt] then table.insert(t, opt) end end
+                return #t == 0 and "None" or table.concat(t, ", ")
+            end
+
+            local Wrap = Create("Frame", {Size=UDim2.new(1,0,0,38), BackgroundTransparency=1, ClipsDescendants=false}, {ScrollFrame})
+            local Main2 = Create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=C.Panel, BorderSizePixel=0, ZIndex=5}, {Wrap})
+            Create("UICorner", {CornerRadius=UDim.new(0,8)}, {Main2})
+            Create("TextLabel", {Size=UDim2.new(0.4,0,1,0), Position=UDim2.fromOffset(12,0),
+                Text=dConfig.Name or "Multi-Select", Font=Enum.Font.GothamSemibold, TextSize=13,
+                TextColor3=C.Text, BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6}, {Main2})
+            local SelLabel = Create("TextLabel", {Size=UDim2.new(0.52,0,1,0), AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,-28,0,0),
+                Text=SelectedText(), Font=Enum.Font.Gotham, TextSize=11, TextColor3=C.Accent,
+                BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=6, TextTruncate=Enum.TextTruncate.AtEnd}, {Main2})
+            Create("TextLabel", {Size=UDim2.fromOffset(20,20), AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-8,0.5,0),
+                Text="▾", Font=Enum.Font.GothamBold, TextSize=14, TextColor3=C.SubText, BackgroundTransparency=1, ZIndex=6}, {Main2})
+
+            local DropFrame = Create("Frame", {
+                Size=UDim2.new(1,0,0,0), Position=UDim2.fromOffset(0,42),
+                BackgroundColor3=C.Surface, BorderSizePixel=0, ClipsDescendants=true, ZIndex=10, Visible=false
+            }, {Wrap})
+            Create("UICorner", {CornerRadius=UDim.new(0,8)}, {DropFrame})
+            Create("UIStroke", {Color=C.Border, Thickness=1}, {DropFrame})
+            local DropList = Create("Frame", {Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, ZIndex=11}, {DropFrame})
+            Create("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, {DropList})
+            Create("UIPadding", {PaddingAll=UDim.new(0,4)}, {DropList})
+
+            local MDObj = {Value=selected}
+            local optBtns = {}
+
+            local function RefreshBtns()
+                for opt, btn in pairs(optBtns) do
+                    Tween(btn, {BackgroundColor3=selected[opt] and C.Accent or C.Panel}, 0.1)
+                end
+                SelLabel.Text = SelectedText()
+            end
+
+            for _, opt in ipairs(Options) do
+                local OBtn = Create("TextButton", {
+                    Size=UDim2.new(1,0,0,30), BackgroundColor3=selected[opt] and C.Accent or C.Panel,
+                    Text=opt, Font=Enum.Font.Gotham, TextSize=12, TextColor3=C.Text, BorderSizePixel=0, ZIndex=12, AutoButtonColor=false
+                }, {DropList})
+                Create("UICorner", {CornerRadius=UDim.new(0,6)}, {OBtn})
+                optBtns[opt] = OBtn
+                OBtn.MouseButton1Click:Connect(function()
+                    selected[opt] = not selected[opt]
+                    MDObj.Value = selected
+                    RefreshBtns()
+                    if dConfig.Callback then
+                        local arr = {}
+                        for _, o in ipairs(Options) do if selected[o] then table.insert(arr, o) end end
+                        pcall(dConfig.Callback, arr)
+                    end
+                end)
+                OBtn.MouseEnter:Connect(function() if not selected[opt] then Tween(OBtn,{BackgroundColor3=C.Border},0.1) end end)
+                OBtn.MouseLeave:Connect(function() if not selected[opt] then Tween(OBtn,{BackgroundColor3=C.Panel},0.1) end end)
+            end
+
+            local TotalH = #Options * 34 + 8
+            local ToggleBtn = Create("TextButton", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="", BorderSizePixel=0, ZIndex=7}, {Main2})
+            ToggleBtn.MouseButton1Click:Connect(function()
+                open = not open
+                if open then
+                    DropFrame.Visible = true
+                    Wrap.Size = UDim2.new(1,0,0,38+TotalH+8)
+                    Tween(DropFrame, {Size=UDim2.new(1,0,0,TotalH)}, 0.2)
+                else
+                    Tween(DropFrame, {Size=UDim2.new(1,0,0,0)}, 0.2)
+                    Wrap.Size = UDim2.new(1,0,0,38)
+                    task.delay(0.21, function() DropFrame.Visible=false end)
+                end
+            end)
+
+            MDObj.Set = function(self, arr)
+                selected = {}
+                for _, v in ipairs(arr) do selected[v] = true end
+                MDObj.Value = selected
+                RefreshBtns()
+            end
+            return MDObj
+        end
+
+        -- ==================== PROGRESS BAR ====================
+        -- Show a read-only progress bar you can update from code.
+        function Tab:CreateProgressBar(pConfig)
+            pConfig = pConfig or {}
+            local Min = pConfig.Min or 0
+            local Max = pConfig.Max or 100
+            local current = math.clamp(pConfig.Default or Min, Min, Max)
+            local suffix = pConfig.Suffix or ""
+
+            local Row = Create("Frame", {Size=UDim2.new(1,0,0,52), BackgroundColor3=C.Panel, BorderSizePixel=0}, {ScrollFrame})
+            Create("UICorner", {CornerRadius=UDim.new(0,8)}, {Row})
+            Create("UIPadding", {PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12), PaddingTop=UDim.new(0,8)}, {Row})
+
+            local TopRow = Create("Frame", {Size=UDim2.new(1,0,0,18), BackgroundTransparency=1}, {Row})
+            Create("TextLabel", {Size=UDim2.new(0.7,0,1,0),
+                Text=pConfig.Name or "Progress", Font=Enum.Font.GothamSemibold, TextSize=13,
+                TextColor3=C.Text, BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Left}, {TopRow})
+            local ValLabel = Create("TextLabel", {Size=UDim2.new(0.3,0,1,0), AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,0,0,0),
+                Text=tostring(current)..suffix, Font=Enum.Font.GothamBold, TextSize=13, TextColor3=C.Accent,
+                BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Right}, {TopRow})
+
+            local Track = Create("Frame", {Size=UDim2.new(1,0,0,8), Position=UDim2.fromOffset(0,28),
+                BackgroundColor3=C.Border, BorderSizePixel=0}, {Row})
+            Create("UICorner", {CornerRadius=UDim.new(1,0)}, {Track})
+            local Fill = Create("Frame", {Size=UDim2.new((current-Min)/(Max-Min),0,1,0), BackgroundColor3=C.Accent, BorderSizePixel=0}, {Track})
+            Create("UICorner", {CornerRadius=UDim.new(1,0)}, {Fill})
+
+            local PBObj = {Value=current}
+            PBObj.Set = function(self, v)
+                v = math.clamp(v, Min, Max)
+                current = v
+                PBObj.Value = v
+                local pct = (v - Min) / (Max - Min)
+                Tween(Fill, {Size=UDim2.new(pct, 0, 1, 0)}, 0.25)
+                ValLabel.Text = tostring(math.round(v)) .. suffix
+            end
+            return PBObj
+        end
+
+        -- ==================== DIVIDER ====================
+        -- Thin horizontal rule for spacing sections visually.
+        function Tab:CreateDivider()
+            local D = Create("Frame", {Size=UDim2.new(1,0,0,1), BackgroundColor3=C.Border, BorderSizePixel=0}, {ScrollFrame})
         end
 
         -- ==================== DROPDOWN ====================
